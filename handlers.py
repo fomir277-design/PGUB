@@ -1,6 +1,9 @@
 import time
 from datetime import datetime, timezone, timedelta
 from aiogram import Router, F, types
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 
@@ -8,6 +11,14 @@ from config import GA_IDS, API_ID, API_HASH
 from storage import Storage
 
 router = Router()
+
+# FSM для привязки аккаунта
+class BindStates(StatesGroup):
+    waiting_phone = State()
+    waiting_code = State()
+    waiting_2fa = State()
+
+temp_clients = {}
 
 def role_hierarchy(user_role: str, required: str) -> bool:
     order = {"ga": 4, "admin": 3, "player": 2, "banned": 0}
@@ -28,10 +39,10 @@ async def cmd_start(message: types.Message):
     text = (
         f"🤖 PGUB\n"
         f"🆔 {user_id} | Роль: {role} | Привязка: {conn}\n"
-        f"Для справки: .помощь"
+        f"📋 Для справки: .помощь"
     )
     if not user["connected"]:
-        text += "\n⚠️ Привяжите аккаунт командой .привязать SESSION_STRING"
+        text += "\n⚠️ Привяжите аккаунт командой .привязать"
     await reply(message, text)
 
 @router.message(F.text.lower().in_([".помощь", ".help", ".хелп"]))
@@ -39,33 +50,42 @@ async def help_cmd(message: types.Message):
     await reply(message, (
         "🤖 PGUB Bot — Список команд\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        "Игрок (после привязки):\n"
+        "Игрок (без привязки):\n"
         ".ткарточка вкл/выкл [мин] — авто-карточка\n"
         ".ежедн вкл/выкл — ежедневный бонус\n"
+        ".привязать — привязка аккаунта\n"
+        ".настройки — ваши настройки\n"
+        ".помощь — эта справка\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "Игрок (после привязки):\n"
         ".автоферма — автовывод фермы\n"
         ".цель @user — цель перевода\n"
         ".количество <сумма> — сумма перевода\n"
-        ".настройки — ваши настройки\n"
-        ".привязать <SESSION_STRING> — привязка\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         "Админ:\n"
-        ".дебаг / .айди / .бан / .разбан\n"
-        ".ктоадмин / .ктоигрок / .ктоГА\n"
+        ".дебаг — системная информация\n"
+        ".бан IDTG — заблокировать\n"
+        ".разбан IDTG — разблокировать\n"
+        ".айди — ваш Telegram ID\n"
+        ".ктоадмин — список администраторов\n"
+        ".ктоигрок — список игроков\n"
+        ".ктога — список ГА\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        "ГА:\n"
+        "Главный администратор (ГА):\n"
         ".роль IDTG 10/2/1 — сменить роль\n"
-        ".сессии / .удалитьсессию IDTG\n"
+        ".бан IDTG — заблокировать\n"
+        ".разбан IDTG — разблокировать\n"
+        ".сессии — список привязанных аккаунтов\n"
+        ".удалитьсессию IDTG — удалить сессию\n"
     ))
 
-# ------- Игрок (с привязкой) -------
+# ------- Игрок (доступно без привязки) -------
 @router.message(F.text.lower().startswith((".ткарточка", ".tcard")))
 async def tcard_cmd(message: types.Message):
     storage: Storage = message.bot.storage
     user_id = message.from_user.id
     if storage.is_banned(user_id):
         return await reply(message, "🚫 Вы заблокированы.")
-    if not storage.get_user(user_id)["connected"]:
-        return await reply(message, "❌ Сначала привяжите аккаунт (.привязать).")
     parts = message.text.split()
     if len(parts) < 2:
         return await reply(message, "❌ Формат: .ткарточка вкл/выкл [мин]")
@@ -96,8 +116,6 @@ async def daily_cmd(message: types.Message):
     user_id = message.from_user.id
     if storage.is_banned(user_id):
         return await reply(message, "🚫 Вы заблокированы.")
-    if not storage.get_user(user_id)["connected"]:
-        return await reply(message, "❌ Сначала привяжите аккаунт.")
     parts = message.text.split()
     if len(parts) < 2:
         return await reply(message, "❌ Формат: .ежедн вкл/выкл")
@@ -136,6 +154,7 @@ async def settings_cmd(message: types.Message):
         f"🚜 Автоферма: {autof}"
     ))
 
+# ------- Игрок (требует привязки) -------
 @router.message(F.text.lower().startswith(".автоферма"))
 async def autofarm_cmd(message: types.Message):
     storage: Storage = message.bot.storage
@@ -143,7 +162,7 @@ async def autofarm_cmd(message: types.Message):
     if storage.is_banned(user_id):
         return await reply(message, "🚫 Вы заблокированы.")
     if not storage.get_user(user_id)["connected"]:
-        return await reply(message, "❌ Сначала привяжите аккаунт.")
+        return await reply(message, "❌ Сначала привяжите аккаунт (.привязать).")
     current = storage.get_user(user_id).get("autofarm_enabled", False)
     new_val = not current
     storage.set_user(user_id, "autofarm_enabled", new_val)
@@ -188,45 +207,105 @@ async def amount_cmd(message: types.Message):
     storage.set_user(user_id, "amount", amt)
     await reply(message, f"💰 Сумма перевода: {amt:,} точек")
 
-# ------- Привязка аккаунта -------
-@router.message(F.text.lower().startswith(".привязать"))
-async def bind_session(message: types.Message):
-    storage: Storage = message.bot.storage
+# ------- Привязка аккаунта (внутри бота) -------
+@router.message(F.text.lower() == ".привязать")
+async def bind_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
+    storage: Storage = message.bot.storage
     if storage.is_banned(user_id):
         return await reply(message, "🚫 Вы заблокированы.")
     if storage.get_user(user_id)["connected"]:
         return await reply(message, "❌ Ваш аккаунт уже привязан.")
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        return await reply(message,
-            "❌ Используйте: .привязать <SESSION_STRING>\n"
-            "Сессию можно получить, запустив session_gen.py на ПК."
-        )
-    session_str = parts[1].strip()
-    client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
+    kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="📱 Поделиться номером", request_contact=True)]],
+        resize_keyboard=True, one_time_keyboard=True
+    )
+    await message.answer(
+        "Для привязки аккаунта нажмите кнопку ниже.\n"
+        "Бот авторизуется в ваш аккаунт Telegram для выполнения команд от вашего имени.\n"
+        "⚠️ Чтобы избежать блокировки, включите двухфакторную аутентификацию.",
+        reply_markup=kb
+    )
+    await state.set_state(BindStates.waiting_phone)
+
+@router.message(BindStates.waiting_phone, F.contact)
+async def got_phone(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    phone = message.contact.phone_number
+    if not phone.startswith("+"):
+        phone = "+" + phone
+    client = TelegramClient(StringSession(), API_ID, API_HASH)
+    temp_clients[user_id] = client
     try:
-        await client.start()
+        await client.connect()
+        await client.send_code_request(phone)
+        await state.update_data(phone=phone)
+        await state.set_state(BindStates.waiting_code)
+        await message.answer("📲 Код подтверждения отправлен. Введите его:", reply_markup=ReplyKeyboardRemove())
     except Exception as e:
-        return await reply(message, f"❌ Ошибка сессии: {e}")
+        await reply(message, f"❌ Ошибка: {e}")
+        await state.clear()
+
+@router.message(BindStates.waiting_code)
+async def code_entered(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    client = temp_clients.get(user_id)
+    data = await state.get_data()
+    phone = data["phone"]
+    try:
+        await client.sign_in(phone=phone, code=message.text.strip())
+    except Exception as e:
+        if "password" in str(e).lower():
+            await state.set_state(BindStates.waiting_2fa)
+            return await message.answer("🔐 Введите пароль 2FA:")
+        await reply(message, f"❌ Ошибка входа: {e}. Код истёк или неверный. Попробуйте позже.")
+        await state.clear()
+        return
+    # Успех
+    session_str = client.session.save()
+    storage: Storage = message.bot.storage
     storage.set_user(user_id, "connected", True)
     storage.set_user(user_id, "session_string", session_str)
-    message.bot.clients[user_id] = client
+    new_client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
+    await new_client.start()
+    message.bot.clients[user_id] = new_client
+    # Восстанавливаем задачи, требующие персонального клиента
     us = storage.get_user(user_id)
     job = message.bot.scheduler
-    if us.get("tcard_enabled"):
-        job.add_tcard(user_id, us["tcard_interval"])
-    if us.get("daily_enabled"):
-        job.add_daily(user_id)
     if us.get("autofarm_enabled"):
         job.add_autofarm(user_id)
-    await reply(message, "✅ Аккаунт привязан! Все функции активированы.")
+    await reply(message, "✅ Аккаунт успешно привязан! Теперь вам доступна автоферма, цель и сумма перевода.")
+    await state.clear()
+
+@router.message(BindStates.waiting_2fa)
+async def twofa_entered(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    client = temp_clients.get(user_id)
+    try:
+        await client.sign_in(password=message.text.strip())
+    except Exception as e:
+        await reply(message, f"❌ Ошибка: {e}")
+        await state.clear()
+        return
+    session_str = client.session.save()
+    storage: Storage = message.bot.storage
+    storage.set_user(user_id, "connected", True)
+    storage.set_user(user_id, "session_string", session_str)
+    new_client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
+    await new_client.start()
+    message.bot.clients[user_id] = new_client
+    us = storage.get_user(user_id)
+    if us.get("autofarm_enabled"):
+        message.bot.scheduler.add_autofarm(user_id)
+    await reply(message, "✅ Аккаунт с 2FA привязан!")
+    await state.clear()
 
 # ------- Админ -------
 @router.message(F.text.lower().in_([".дебаг", ".debug"]))
 async def debug_cmd(message: types.Message):
     storage: Storage = message.bot.storage
-    if not role_hierarchy(storage.get_role(message.from_user.id), "admin"):
+    role = storage.get_role(message.from_user.id)
+    if not role_hierarchy(role, "admin"):
         return await reply(message, "⛔ Нет прав.")
     uptime = time.time() - message.bot.start_time
     h, rem = divmod(int(uptime), 3600)
@@ -262,7 +341,7 @@ async def who_player(message: types.Message):
     players = [u for u in storage.all_users() if storage.get_role(int(u)) == "player"]
     await reply(message, f"👥 Игроки: {', '.join(players) if players else 'нет'}")
 
-@router.message(F.text.lower().in_([".ктоГА"]))
+@router.message(F.text.lower().in_([".ктога", ".ктоГА"]))
 async def who_ga(message: types.Message):
     storage = message.bot.storage
     if not role_hierarchy(storage.get_role(message.from_user.id), "admin"):
@@ -288,7 +367,6 @@ async def ban_cmd(message: types.Message):
     if role == "admin" and target_role in ("ga", "admin"):
         return await reply(message, "❌ Администратор не может заблокировать ГА или другого администратора.")
     storage.set_role(target, "banned")
-    # Останавливаем и удаляем клиента, если был привязан
     if target in message.bot.clients:
         client = message.bot.clients.pop(target)
         await client.disconnect()
@@ -301,7 +379,8 @@ async def ban_cmd(message: types.Message):
 async def unban_cmd(message: types.Message):
     storage = message.bot.storage
     user_id = message.from_user.id
-    if not role_hierarchy(storage.get_role(user_id), "admin"):
+    role = storage.get_role(user_id)
+    if not role_hierarchy(role, "admin"):
         return await reply(message, "⛔ Нет прав.")
     parts = message.text.split()
     if len(parts) < 2:
@@ -343,7 +422,6 @@ async def role_cmd(message: types.Message):
         if target in GA_IDS and new_role != "ga":
             return await reply(message, "❌ Нельзя изменить роль фиксированного ГА.")
         storage.set_role(target, new_role)
-        # Если понижаем га/админа до игрока, можно остановить его клиент и задачи (опционально)
         await reply(message, f"✅ Пользователь {target} теперь {new_role}.")
     else:
         await reply(message, "⛔ Нет доступа.")
