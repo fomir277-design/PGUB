@@ -7,7 +7,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from config import BOT_TOKEN, API_ID, API_HASH, SESSION_STRING
+from config import BOT_TOKEN, API_ID, API_HASH
 from storage import Storage
 from handlers import router
 from scheduler import JobManager
@@ -18,19 +18,7 @@ logger = logging.getLogger(__name__)
 async def main():
     storage = Storage()
 
-    # Основной клиент (необязательный)
-    main_client = None
-    if SESSION_STRING:
-        try:
-            main_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
-            await main_client.start()
-            logger.info("Основной клиент запущен")
-        except Exception as e:
-            logger.error(f"Не удалось запустить основной клиент: {e}")
-    else:
-        logger.warning("SESSION_STRING не задан. Ткарточка и ежедневная награда будут недоступны.")
-
-    # Привязанные клиенты
+    # Подгружаем только привязанных пользователей
     clients = {}
     for uid_str in storage.all_users():
         uid = int(uid_str)
@@ -44,8 +32,7 @@ async def main():
             except Exception as e:
                 logger.error(f"Ошибка восстановления сессии {uid}: {e}")
 
-    # Планировщик (если нет основного клиента, передадим None)
-    job = JobManager(main_client, clients, storage)
+    job = JobManager(clients, storage)
     await job.restore_all()
 
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -66,6 +53,8 @@ async def main():
             logger.info(f"BC enabled {uid}")
         else:
             storage.remove_connection(uid)
+            # Не останавливаем клиент при отключении BC, чтобы не терять привязку.
+            # Если нужно отключать по BC — удалите строки ниже.
             logger.info(f"BC disabled {uid}")
 
     await bot.set_my_commands([BotCommand(command="start", description="Начало работы")])

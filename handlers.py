@@ -16,7 +16,7 @@ def role_hierarchy(user_role: str, required: str) -> bool:
 async def reply(msg: types.Message, text: str):
     await msg.answer(text, parse_mode=None)
 
-# ------- Главное меню /start -------
+# ------- /start -------
 @router.message(F.text.lower().in_(["/start", ".start", ".старт"]))
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
@@ -24,22 +24,14 @@ async def cmd_start(message: types.Message):
     storage.register_if_absent(user_id)
     user = storage.get_user(user_id)
     role = user["role"]
-    conn = "✅ привязан" if user["connected"] else "❌ не привязан"
+    conn = "✅" if user["connected"] else "❌"
     text = (
-        f"🤖 Добро пожаловать в PGUB!\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🆔 Ваш ID: {user_id}\n"
-        f"👤 Роль: {role}\n"
-        f"📱 Статус привязки: {conn}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🤖 PGUB\n"
+        f"🆔 {user_id} | Роль: {role} | Привязка: {conn}\n"
+        f"Для справки: .помощь"
     )
     if not user["connected"]:
-        text += (
-            "⚠️ Ваш аккаунт не привязан. Некоторые функции недоступны.\n"
-            "ℹ️ Для безопасной привязки отправьте команду .привязать SESSION_STRING\n"
-            "   (получить сессию можно через нашего бота-генератора или локально скриптом)\n"
-        )
-    text += "📋 Справка по командам: .помощь"
+        text += "\n⚠️ Привяжите аккаунт командой .привязать SESSION_STRING"
     await reply(message, text)
 
 @router.message(F.text.lower().in_([".помощь", ".help", ".хелп"]))
@@ -47,42 +39,33 @@ async def help_cmd(message: types.Message):
     await reply(message, (
         "🤖 PGUB Bot — Список команд\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        "Игрок (без привязки):\n"
+        "Игрок (после привязки):\n"
         ".ткарточка вкл/выкл [мин] — авто-карточка\n"
         ".ежедн вкл/выкл — ежедневный бонус\n"
-        ".привязать <SESSION_STRING> — привязка аккаунта\n"
-        ".настройки — ваши настройки\n"
-        ".помощь — эта справка\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        "Игрок (после привязки):\n"
         ".автоферма — автовывод фермы\n"
         ".цель @user — цель перевода\n"
         ".количество <сумма> — сумма перевода\n"
+        ".настройки — ваши настройки\n"
+        ".привязать <SESSION_STRING> — привязка\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         "Админ:\n"
-        ".дебаг — системная информация\n"
-        ".бан IDTG — заблокировать\n"
-        ".разбан IDTG — разблокировать\n"
-        ".айди — ваш Telegram ID\n"
-        ".ктоадмин — список администраторов\n"
-        ".ктоигрок — список игроков\n"
-        ".ктоГА — список ГА\n"
+        ".дебаг / .айди / .бан / .разбан\n"
+        ".ктоадмин / .ктоигрок / .ктоГА\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        "Главный администратор (ГА):\n"
+        "ГА:\n"
         ".роль IDTG 10/2/1 — сменить роль\n"
-        ".бан IDTG — заблокировать\n"
-        ".разбан IDTG — разблокировать\n"
-        ".сессии — список привязанных аккаунтов\n"
-        ".удалитьсессию IDTG — удалить сессию\n"
+        ".сессии / .удалитьсессию IDTG\n"
     ))
 
-# ------- Игрок (уровень 1) -------
+# ------- Игрок (с привязкой) -------
 @router.message(F.text.lower().startswith((".ткарточка", ".tcard")))
 async def tcard_cmd(message: types.Message):
     storage: Storage = message.bot.storage
     user_id = message.from_user.id
     if storage.is_banned(user_id):
         return await reply(message, "🚫 Вы заблокированы.")
+    if not storage.get_user(user_id)["connected"]:
+        return await reply(message, "❌ Сначала привяжите аккаунт (.привязать).")
     parts = message.text.split()
     if len(parts) < 2:
         return await reply(message, "❌ Формат: .ткарточка вкл/выкл [мин]")
@@ -113,6 +96,8 @@ async def daily_cmd(message: types.Message):
     user_id = message.from_user.id
     if storage.is_banned(user_id):
         return await reply(message, "🚫 Вы заблокированы.")
+    if not storage.get_user(user_id)["connected"]:
+        return await reply(message, "❌ Сначала привяжите аккаунт.")
     parts = message.text.split()
     if len(parts) < 2:
         return await reply(message, "❌ Формат: .ежедн вкл/выкл")
@@ -151,7 +136,6 @@ async def settings_cmd(message: types.Message):
         f"🚜 Автоферма: {autof}"
     ))
 
-# ------- Игрок (уровень 2) -------
 @router.message(F.text.lower().startswith(".автоферма"))
 async def autofarm_cmd(message: types.Message):
     storage: Storage = message.bot.storage
@@ -159,7 +143,7 @@ async def autofarm_cmd(message: types.Message):
     if storage.is_banned(user_id):
         return await reply(message, "🚫 Вы заблокированы.")
     if not storage.get_user(user_id)["connected"]:
-        return await reply(message, "❌ Сначала привяжите аккаунт (.привязать).")
+        return await reply(message, "❌ Сначала привяжите аккаунт.")
     current = storage.get_user(user_id).get("autofarm_enabled", False)
     new_val = not current
     storage.set_user(user_id, "autofarm_enabled", new_val)
@@ -204,7 +188,7 @@ async def amount_cmd(message: types.Message):
     storage.set_user(user_id, "amount", amt)
     await reply(message, f"💰 Сумма перевода: {amt:,} точек")
 
-# ------- Привязка аккаунта (новая безопасная) -------
+# ------- Привязка аккаунта -------
 @router.message(F.text.lower().startswith(".привязать"))
 async def bind_session(message: types.Message):
     storage: Storage = message.bot.storage
@@ -217,22 +201,17 @@ async def bind_session(message: types.Message):
     if len(parts) < 2:
         return await reply(message,
             "❌ Используйте: .привязать <SESSION_STRING>\n"
-            "Сессию можно получить:\n"
-            "1) Запустите скрипт session_gen.py на своём ПК (есть в репозитории)\n"
-            "2) Или используйте нашего бота-генератора"
+            "Сессию можно получить, запустив session_gen.py на ПК."
         )
     session_str = parts[1].strip()
-    # Пытаемся авторизоваться
     client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
     try:
         await client.start()
     except Exception as e:
-        return await reply(message, f"❌ Ошибка: недействительная сессия ({e})")
-    # Сохраняем
+        return await reply(message, f"❌ Ошибка сессии: {e}")
     storage.set_user(user_id, "connected", True)
     storage.set_user(user_id, "session_string", session_str)
     message.bot.clients[user_id] = client
-    # Восстанавливаем задачи
     us = storage.get_user(user_id)
     job = message.bot.scheduler
     if us.get("tcard_enabled"):
@@ -241,25 +220,24 @@ async def bind_session(message: types.Message):
         job.add_daily(user_id)
     if us.get("autofarm_enabled"):
         job.add_autofarm(user_id)
-    await reply(message, "✅ Аккаунт успешно привязан! Теперь вам доступны все функции.")
+    await reply(message, "✅ Аккаунт привязан! Все функции активированы.")
 
 # ------- Админ -------
 @router.message(F.text.lower().in_([".дебаг", ".debug"]))
 async def debug_cmd(message: types.Message):
     storage: Storage = message.bot.storage
-    role = storage.get_role(message.from_user.id)
-    if not role_hierarchy(role, "admin"):
+    if not role_hierarchy(storage.get_role(message.from_user.id), "admin"):
         return await reply(message, "⛔ Нет прав.")
     uptime = time.time() - message.bot.start_time
     h, rem = divmod(int(uptime), 3600)
     m, s = divmod(rem, 60)
     cnt = storage.count_by_roles()
     now = datetime.now(timezone.utc) + timedelta(hours=3)
-    sessions = sum(1 for uid in storage.all_users() if storage.get_user(int(uid))["connected"])
+    sessions = sum(1 for u in storage.all_users() if storage.get_user(int(u))["connected"])
     await reply(message, (
         f"🛠 Отладка\n"
         f"⏱ Аптайм: {h:02}:{m:02}:{s:02}\n"
-        f"🕒 Время и дата бота: {now.strftime('%d.%m.%Y %H:%M')} (UTC+3)\n"
+        f"🕒 Время бота: {now.strftime('%d.%m.%Y %H:%M')} (UTC+3)\n"
         f"👥 Пользователи: ГА {cnt['ga']}, Админ {cnt['admin']}, Игроков {cnt['player']}, Забанено {cnt['banned']}\n"
         f"📱 Активных сессий: {sessions}"
     ))
@@ -270,31 +248,31 @@ async def id_cmd(message: types.Message):
 
 @router.message(F.text.lower().in_([".ктоадмин"]))
 async def who_admin(message: types.Message):
-    storage: Storage = message.bot.storage
+    storage = message.bot.storage
     if not role_hierarchy(storage.get_role(message.from_user.id), "admin"):
         return await reply(message, "⛔ Нет прав.")
-    admins = [uid for uid in storage.all_users() if storage.get_role(int(uid)) == "admin"]
+    admins = [u for u in storage.all_users() if storage.get_role(int(u)) == "admin"]
     await reply(message, f"👥 Администраторы: {', '.join(admins) if admins else 'нет'}")
 
 @router.message(F.text.lower().in_([".ктоигрок"]))
 async def who_player(message: types.Message):
-    storage: Storage = message.bot.storage
+    storage = message.bot.storage
     if not role_hierarchy(storage.get_role(message.from_user.id), "admin"):
         return await reply(message, "⛔ Нет прав.")
-    players = [uid for uid in storage.all_users() if storage.get_role(int(uid)) == "player"]
+    players = [u for u in storage.all_users() if storage.get_role(int(u)) == "player"]
     await reply(message, f"👥 Игроки: {', '.join(players) if players else 'нет'}")
 
 @router.message(F.text.lower().in_([".ктоГА"]))
 async def who_ga(message: types.Message):
-    storage: Storage = message.bot.storage
+    storage = message.bot.storage
     if not role_hierarchy(storage.get_role(message.from_user.id), "admin"):
         return await reply(message, "⛔ Нет прав.")
-    gas = [uid for uid in storage.all_users() if storage.get_role(int(uid)) == "ga"]
+    gas = [u for u in storage.all_users() if storage.get_role(int(u)) == "ga"]
     await reply(message, f"👥 ГА: {', '.join(gas) if gas else 'нет'}")
 
 @router.message(F.text.lower().startswith((".бан ", ".ban ")))
 async def ban_cmd(message: types.Message):
-    storage: Storage = message.bot.storage
+    storage = message.bot.storage
     user_id = message.from_user.id
     role = storage.get_role(user_id)
     if not role_hierarchy(role, "admin"):
@@ -310,14 +288,20 @@ async def ban_cmd(message: types.Message):
     if role == "admin" and target_role in ("ga", "admin"):
         return await reply(message, "❌ Администратор не может заблокировать ГА или другого администратора.")
     storage.set_role(target, "banned")
+    # Останавливаем и удаляем клиента, если был привязан
+    if target in message.bot.clients:
+        client = message.bot.clients.pop(target)
+        await client.disconnect()
+    message.bot.scheduler.remove_tcard(target)
+    message.bot.scheduler.remove_daily(target)
+    message.bot.scheduler.remove_autofarm(target)
     await reply(message, f"🚫 Пользователь {target} заблокирован.")
 
 @router.message(F.text.lower().startswith((".разбан ", ".unban ")))
 async def unban_cmd(message: types.Message):
-    storage: Storage = message.bot.storage
+    storage = message.bot.storage
     user_id = message.from_user.id
-    role = storage.get_role(user_id)
-    if not role_hierarchy(role, "admin"):
+    if not role_hierarchy(storage.get_role(user_id), "admin"):
         return await reply(message, "⛔ Нет прав.")
     parts = message.text.split()
     if len(parts) < 2:
@@ -333,7 +317,7 @@ async def unban_cmd(message: types.Message):
 
 @router.message(F.text.lower().startswith((".роль ", ".role ")))
 async def role_cmd(message: types.Message):
-    storage: Storage = message.bot.storage
+    storage = message.bot.storage
     user_id = message.from_user.id
     role = storage.get_role(user_id)
     if not role_hierarchy(role, "admin"):
@@ -359,6 +343,7 @@ async def role_cmd(message: types.Message):
         if target in GA_IDS and new_role != "ga":
             return await reply(message, "❌ Нельзя изменить роль фиксированного ГА.")
         storage.set_role(target, new_role)
+        # Если понижаем га/админа до игрока, можно остановить его клиент и задачи (опционально)
         await reply(message, f"✅ Пользователь {target} теперь {new_role}.")
     else:
         await reply(message, "⛔ Нет доступа.")
@@ -366,7 +351,7 @@ async def role_cmd(message: types.Message):
 # ------- ГА -------
 @router.message(F.text.lower() == ".сессии")
 async def sessions_cmd(message: types.Message):
-    storage: Storage = message.bot.storage
+    storage = message.bot.storage
     if storage.get_role(message.from_user.id) != "ga":
         return await reply(message, "⛔ Только для ГА.")
     sessions = storage.get_all_sessions()
@@ -379,7 +364,7 @@ async def sessions_cmd(message: types.Message):
 
 @router.message(F.text.lower().startswith(".удалитьсессию"))
 async def delsession_cmd(message: types.Message):
-    storage: Storage = message.bot.storage
+    storage = message.bot.storage
     if storage.get_role(message.from_user.id) != "ga":
         return await reply(message, "⛔ Только для ГА.")
     parts = message.text.split()
@@ -403,4 +388,4 @@ async def delsession_cmd(message: types.Message):
 @router.message()
 async def catch_banned(message: types.Message):
     if message.bot.storage.is_banned(message.from_user.id):
-        await reply(message, "🚫 Вы заблокированы и не можете использовать бота.")
+        await reply(message, "🚫 Вы заблокированы.")
