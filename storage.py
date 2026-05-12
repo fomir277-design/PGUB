@@ -35,7 +35,6 @@ class Storage:
         with open(self.file, "w", encoding="utf-8") as f:
             json.dump(self.data, f, indent=2, ensure_ascii=False)
 
-    # ---------- пользователи ----------
     def register_if_absent(self, user_id: int):
         uid = str(user_id)
         if uid not in self.data["users"]:
@@ -57,11 +56,14 @@ class Storage:
 
     def get_user(self, user_id: int):
         uid = str(user_id)
-        user = self.data["users"].get(uid, DEFAULT_USER.copy())
-        # Гарантия роли для фиксированных ГА
+        # Берём базовые настройки и обновляем сохранёнными
+        base = DEFAULT_USER.copy()
+        if uid in self.data["users"]:
+            base.update(self.data["users"][uid])
+        # Гарантированно ГА для фиксированных ID
         if int(uid) in GA_IDS:
-            user["role"] = "ga"
-        return user
+            base["role"] = "ga"
+        return base
 
     def set_user(self, user_id: int, key: str, value: Any):
         uid = str(user_id)
@@ -78,7 +80,6 @@ class Storage:
         return self.get_user(user_id).get("role", "player")
 
     def set_role(self, user_id: int, role: str):
-        # Не даём изменить роль фиксированных ГА
         if int(user_id) in GA_IDS and role != "ga":
             return
         self.set_user(user_id, "role", role)
@@ -98,7 +99,6 @@ class Storage:
         return list(self.data["users"].keys())
 
     def get_all_sessions(self):
-        """Возвращает список (user_id, session_string) для всех connected пользователей."""
         sessions = []
         for uid, u in self.data["users"].items():
             if u.get("connected") and u.get("session_string"):

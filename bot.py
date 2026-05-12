@@ -22,8 +22,8 @@ async def main():
     clients = {}
     for uid_str in storage.all_users():
         uid = int(uid_str)
-        us = storage.get_user(uid)
-        if us["connected"] and us["session_string"]:
+        us = storage.get_user(uid)          # теперь всегда полный словарь
+        if us.get("connected") and us.get("session_string"):
             try:
                 client = TelegramClient(StringSession(us["session_string"]), API_ID, API_HASH)
                 await client.start()
